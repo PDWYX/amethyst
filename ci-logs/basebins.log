@@ -1,0 +1,65 @@
+/Applications/Xcode_15.4.app/Contents/Developer/usr/bin/make -C jbutil clean
+/Applications/Xcode_15.4.app/Contents/Developer/usr/bin/make -C launchd_hook clean
+/Applications/Xcode_15.4.app/Contents/Developer/usr/bin/make -C base_hook clean
+/Applications/Xcode_15.4.app/Contents/Developer/usr/bin/make -C libjailbreak clean
+/Applications/Xcode_15.4.app/Contents/Developer/usr/bin/make -C jbutil all
+/Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -arch arm64 -c shc/arm64.s -o shc/arm64.o
+/opt/homebrew/opt/llvm/bin/llvm-objcopy --dump-section=__TEXT,__text=shc/arm64.bin shc/arm64.o
+/Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -I./include -isysroot /Applications/Xcode_15.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS17.5.sdk -mios-version-min=12.0 -arch arm64e -arch arm64 -Werror -Wall -Wno-unused-variable -Wno-unused-function -fvisibility=hidden -fvisibility-inlines-hidden -L/Applications/Xcode_15.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS17.5.sdk/usr/lib -lc -lSystem -lcompression -framework CoreFoundation -Wl,-sectcreate,__DATA,__arm64_shc,./shc/arm64.bin -o jbutil src/extract.c src/injector.c src/install.c src/main.c src/process.c src/tnsv2.c src/util.c src/ptrauth.s
+src/extract.c:131:12: error: variable 'mtime' set but not used [-Werror,-Wunused-but-set-variable]
+    time_t mtime = 0;
+           ^
+1 error generated.
+make[1]: *** [_all] Error 1
+make: *** [all] Error 2
+/Applications/Xcode_15.4.app/Contents/Developer/usr/bin/make -C jbutil clean
+/Applications/Xcode_15.4.app/Contents/Developer/usr/bin/make -C launchd_hook clean
+/Applications/Xcode_15.4.app/Contents/Developer/usr/bin/make -C base_hook clean
+/Applications/Xcode_15.4.app/Contents/Developer/usr/bin/make -C libjailbreak clean
+/Applications/Xcode_15.4.app/Contents/Developer/usr/bin/make -C jbutil all
+/Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -arch arm64 -c shc/arm64.s -o shc/arm64.o
+/opt/homebrew/opt/llvm/bin/llvm-objcopy --dump-section=__TEXT,__text=shc/arm64.bin shc/arm64.o
+/Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -I./include -isysroot /Applications/Xcode_15.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS17.5.sdk -mios-version-min=12.0 -arch arm64e -arch arm64 -Wno-error -Wno-implicit-function-declaration -Wno-error=implicit-function-declaration -Wall -Wno-unused-variable -Wno-unused-function -fvisibility=hidden -fvisibility-inlines-hidden -L/Applications/Xcode_15.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS17.5.sdk/usr/lib -lc -lSystem -lcompression -framework CoreFoundation -Wl,-sectcreate,__DATA,__arm64_shc,./shc/arm64.bin -o jbutil src/extract.c src/injector.c src/install.c src/main.c src/process.c src/tnsv2.c src/util.c src/ptrauth.s
+src/extract.c:131:12: warning: variable 'mtime' set but not used [-Wunused-but-set-variable]
+    time_t mtime = 0;
+           ^
+1 warning generated.
+ld: warning: ignoring duplicate libraries: '-lSystem'
+src/extract.c:131:12: warning: variable 'mtime' set but not used [-Wunused-but-set-variable]
+    time_t mtime = 0;
+           ^
+1 warning generated.
+ld: warning: ignoring duplicate libraries: '-lSystem'
+/Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/strip -x jbutil
+/opt/homebrew/bin/ldid -Sents.xml jbutil
+/Applications/Xcode_15.4.app/Contents/Developer/usr/bin/make -C launchd_hook all
+/Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -DLAUNCHD_HOOK=1 -I./include -I../common/include -isysroot /Applications/Xcode_15.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS17.5.sdk -mios-version-min=12.0 -fno-objc-arc -arch arm64 -arch arm64e -Wno-error -Wno-implicit-function-declaration -Wno-error=implicit-function-declaration -Wall -Wno-unused-variable -Wno-unused-function -fvisibility=hidden -fvisibility-inlines-hidden -L/Applications/Xcode_15.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS17.5.sdk/usr/lib -lc -lSystem -dynamiclib -framework CoreFoundation -framework ImageIO -framework CoreGraphics -framework IOSurface -framework IOKit ../resources/IOMobileFramebuffer.tbd -Wl,-sectcreate,__DATA,__splashscreen,../resources/splashscreen.jp2 -o launchd_hook.dylib src/codesign.c src/jbserver.c src/loader.c src/main.c src/memory.c src/ppl.c src/trustcache.c src/util.c ../common/src/basebin_hook.c ../common/src/basebin_instructions.c ../common/src/basebin_macho.c ../common/src/basebin_memory.c ../common/src/basebin_memory.s ../common/src/basebin_ptrauth.s ../common/src/basebin_util.c
+ld: warning: ignoring duplicate libraries: '-lSystem'
+ld: warning: ignoring duplicate libraries: '-lSystem'
+/Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/strip -x launchd_hook.dylib
+/opt/homebrew/bin/ldid -S launchd_hook.dylib
+/Applications/Xcode_15.4.app/Contents/Developer/usr/bin/make -C base_hook all
+/Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -I./include -I../common/include -isysroot /Applications/Xcode_15.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS17.5.sdk -mios-version-min=12.0 -arch arm64e -arch arm64 -Wno-error -Wno-implicit-function-declaration -Wno-error=implicit-function-declaration -Wall -Wno-unused-variable -Wno-unused-function -fvisibility=hidden -fvisibility-inlines-hidden -L/Applications/Xcode_15.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS17.5.sdk/usr/lib -lc -lSystem -dynamiclib -o base_hook.dylib src/hooks.c src/loader.c src/main.c ../common/src/basebin_dyld.c ../common/src/basebin_hook.c ../common/src/basebin_instructions.c ../common/src/basebin_jbserver.c ../common/src/basebin_macho.c ../common/src/basebin_memory.c ../common/src/basebin_util.c ../common/src/basebin_memory.s ../common/src/basebin_ptrauth.s
+ld: warning: ignoring duplicate libraries: '-lSystem'
+ld: warning: ignoring duplicate libraries: '-lSystem'
+/Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/strip -x base_hook.dylib
+/opt/homebrew/bin/ldid -S base_hook.dylib
+/Applications/Xcode_15.4.app/Contents/Developer/usr/bin/make -C libjailbreak all
+/Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -I./include -isysroot /Applications/Xcode_15.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS17.5.sdk -mios-version-min=12.0 -arch arm64e -arch arm64 -Wno-error -Wno-implicit-function-declaration -Wno-error=implicit-function-declaration -Wall -Wno-unused-variable -Wno-unused-function -fvisibility=hidden -fvisibility-inlines-hidden -DBASEBIN_EXPORT='__attribute__((__visibility__("default")))' -L/Applications/Xcode_15.4.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS17.5.sdk/usr/lib -lc -lSystem -dynamiclib -Wl,-exported_symbols_list,../resources/exports/libjailbreak.txt -o libjailbreak.dylib src/main.c
+src/main.c:55:13: warning: call to undeclared function 'mach_ports_lookup'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+        if (mach_ports_lookup(mach_task_self(), &ports, &count) == 0) {
+            ^
+1 warning generated.
+ld: warning: ignoring duplicate libraries: '-lSystem'
+src/main.c:55:13: warning: call to undeclared function 'mach_ports_lookup'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+        if (mach_ports_lookup(mach_task_self(), &ports, &count) == 0) {
+            ^
+1 warning generated.
+ld: warning: ignoring duplicate libraries: '-lSystem'
+/Applications/Xcode_15.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/strip -x libjailbreak.dylib
+/opt/homebrew/bin/ldid -S libjailbreak.dylib
+COPYFILE_DISABLE=1 dpkg-deb -Znone --root-owner-group --build ./staging_tnsv2 ./tnsv2_updater.deb
+dpkg-deb: building package 'com.staturnz.tnsv2-updater' in './tnsv2_updater.deb'.
+COPYFILE_DISABLE=1 dpkg-deb -Znone --root-owner-group --build ./staging_tnsv2_stub ./tnsv2_updater_stub.deb
+dpkg-deb: building package 'com.staturnz.tnsv2-updater' in './tnsv2_updater_stub.deb'.
+cd ./staging && COPYFILE_DISABLE=1 tar --numeric-owner -c --no-xattrs -f ../basebins.tar ./*
