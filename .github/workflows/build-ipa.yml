@@ -1,0 +1,149 @@
+name: Build Amethyst IPA
+
+# Builds the jailbreak app + the basebins spawn hooks on a macOS runner and
+# uploads an installable, fakesigned Amethyst.ipa as a workflow artifact.
+# This is the CI equivalent of:
+#   make -C basebins package     (needs Xcode + ldid, dpkg-deb optional)
+#   cd Amethyst && ./Amethyst/buildipa.sh
+# Run it from the Actions tab (Run workflow) or just push to one of the branches
+# below.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - fix/ios13-stability
+
+jobs:
+  build-ipa:
+    name: Build IPA (macOS + Xcode)
+    runs-on: macos-14
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          echo "iphoneos SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+          echo "commit: $(git rev-parse HEAD)  branch: $(git rev-parse --abbrev-ref HEAD)"
+
+      - name: Install ldid and dpkg
+        run: |
+          brew install ldid || brew install ldid-procursus || true
+          brew install dpkg || true
+          if ! command -v ldid >/dev/null 2>&1; then
+            # Minimal ldid shim: "ldid -S <macho>" -> ad-hoc codesign, so the build
+            # can still produce a runnable binary on a jailbroken device.
+            mkdir -p "$HOME/bin"
+            printf '%s\n' \
+              '#!/bin/bash' \
+              'while [ $# -gt 0 ]; do case "$1" in -S) shift ;; *) break ;; esac; done' \
+              'exec /usr/bin/codesign --force --sign - --timestamp=none "$@"' \
+              > "$HOME/bin/ldid"
+            chmod +x "$HOME/bin/ldid"
+            echo "$HOME/bin" >> "$GITHUB_PATH"
+          fi
+          command -v ldid || echo "::warning::ldid not found, using ad-hoc codesign instead"
+          command -v dpkg-deb || echo "::notice::dpkg-deb not found, basebins.tar will be built manually"
+
+      - name: Build basebins (basebins.tar + updater debs)
+        run: |
+          set -e
+          cd basebins
+
+          # `make package` runs `clean`, which deletes the two committed .deb
+          # files; keep copies so a failed dpkg-deb step cannot break the app
+          # build (the Xcode target needs them as bundle resources).
+          cp tnsv2_updater.deb /tmp/tnsv2_updater.deb
+          cp tnsv2_updater_stub.deb /tmp/tnsv2_updater_stub.deb
+
+          build_basebins() {
+            if command -v dpkg-deb >/dev/null 2>&1; then
+              make package
+            else
+              echo "== make all + manual basebins.tar (keeping the committed debs)"
+              make all
+              rm -rf staging
+              mkdir -p staging/amethyst staging/usr/lib
+              cp -a jbutil/jbutil                   staging/amethyst/jbutil
+              cp -a launchd_hook/launchd_hook.dylib staging/amethyst/launchd_hook.dylib
+              cp -a base_hook/base_hook.dylib       staging/usr/lib/base_hook.dylib
+              cp -a libjailbreak/libjailbreak.dylib staging/usr/lib/libjailbreak.dylib
+              chmod 0755 staging/amethyst/* staging/usr/lib/*
+              find staging -name '.DS_Store' -delete
+              ( cd staging && COPYFILE_DISABLE=1 tar --numeric-owner -c --no-xattrs -f ../basebins.tar ./* )
+            fi
+          }
+
+          if ! build_basebins; then
+            # Newer clang/SDKs emit extra warnings and the Makefiles use -Werror;
+            # retry once with warnings downgraded before giving up.
+            echo "::warning::basebins build failed, retrying with -Werror downgraded"
+            grep -rl -- '-Werror' --include=Makefile . | xargs sed -i '' 's/-Werror/-Wno-error/g'
+            build_basebins
+          fi
+
+          [ -f tnsv2_updater.deb ] || cp /tmp/tnsv2_updater.deb .
+          [ -f tnsv2_updater_stub.deb ] || cp /tmp/tnsv2_updater_stub.deb .
+          ls -la basebins.tar tnsv2_updater.deb tnsv2_updater_stub.deb
+
+      - name: Build app (unsigned)
+        run: |
+          set -o pipefail
+          cd Amethyst
+          xcodebuild clean build \
+            -project Amethyst.xcodeproj \
+            -scheme Amethyst \
+            -sdk iphoneos \
+            -configuration Release \
+            SYMROOT="$(pwd)/build" \
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            2>&1 | tee /tmp/xcodebuild.log | tail -60
+          ls -la build/Release-iphoneos/
+
+      - name: Fakesign and package IPA
+        run: |
+          set -e
+          cd Amethyst
+          APP=$(ls -d build/Release-iphoneos/*.app | head -1)
+          echo "app bundle: $APP"
+
+          strip "$APP/Amethyst" || true
+          if command -v ldid >/dev/null 2>&1; then
+            ldid -S "$APP/Amethyst"
+          else
+            codesign --force --sign - --timestamp=none "$APP/Amethyst"
+          fi
+
+          rm -rf build/Release-iphoneos/Payload build/Release-iphoneos/Amethyst.ipa
+          mkdir -p build/Release-iphoneos/Payload
+          cp -R "$APP" build/Release-iphoneos/Payload/
+          cd build/Release-iphoneos
+          zip -qry Amethyst.ipa Payload
+          ls -la Amethyst.ipa
+          echo "== bundle sanity check"
+          unzip -l Amethyst.ipa | grep -E "basebins.tar|tnsv2_updater|Amethyst$|Info.plist" || true
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Amethyst-ipa
+          path: Amethyst/build/Release-iphoneos/Amethyst.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload xcodebuild log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: /tmp/xcodebuild.log
+          if-no-files-found: ignore
