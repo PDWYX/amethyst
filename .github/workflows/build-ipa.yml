@@ -3,7 +3,7 @@ name: Build Amethyst IPA
 # Builds the jailbreak app + the basebins spawn hooks on a macOS runner and
 # uploads an installable, fakesigned Amethyst.ipa as a workflow artifact.
 # This is the CI equivalent of:
-#   make -C basebins package     (needs Xcode + ldid, dpkg-deb optional)
+#   make -C basebins package     (needs Xcode + ldid + llvm-objcopy, dpkg-deb optional)
 #   cd Amethyst && ./Amethyst/buildipa.sh
 # Run it from the Actions tab (Run workflow) or just push to one of the branches
 # below.
@@ -14,6 +14,9 @@ on:
     branches:
       - main
       - fix/ios13-stability
+
+permissions:
+  contents: write
 
 jobs:
   build-ipa:
@@ -34,28 +37,55 @@ jobs:
           echo "iphoneos SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
           echo "commit: $(git rev-parse HEAD)  branch: $(git rev-parse --abbrev-ref HEAD)"
 
-      - name: Install ldid and dpkg
+      - name: Install ldid, dpkg and llvm-objcopy
         run: |
+          set -x
+          mkdir -p "$HOME/bin"
+
+          # basebins/jbutil/Makefile does `LDID = $(shell which ldid)` and then
+          # `ldid -Sents.xml jbutil`.
           brew install ldid || brew install ldid-procursus || true
-          brew install dpkg || true
           if ! command -v ldid >/dev/null 2>&1; then
-            # Minimal ldid shim: "ldid -S <macho>" -> ad-hoc codesign, so the build
-            # can still produce a runnable binary on a jailbroken device.
-            mkdir -p "$HOME/bin"
             printf '%s\n' \
               '#!/bin/bash' \
-              'while [ $# -gt 0 ]; do case "$1" in -S) shift ;; *) break ;; esac; done' \
+              'ents=""' \
+              'while [ $# -gt 0 ]; do' \
+              '  case "$1" in' \
+              '    -S) shift ;;' \
+              '    -S*) ents="${1#-S}"; shift ;;' \
+              '    -M|-C) shift ;;' \
+              '    *) break ;;' \
+              '  esac' \
+              'done' \
+              'if [ -n "$ents" ] && [ -f "$ents" ]; then' \
+              '  exec /usr/bin/codesign --force --sign - --timestamp=none --entitlements "$ents" "$@"' \
+              'fi' \
               'exec /usr/bin/codesign --force --sign - --timestamp=none "$@"' \
               > "$HOME/bin/ldid"
             chmod +x "$HOME/bin/ldid"
             echo "$HOME/bin" >> "$GITHUB_PATH"
           fi
+
+          # jbutil/Makefile uses `OBJCOPY = $(shell which llvm-objcopy)` to dump
+          # the __TEXT,__text section of shc/arm64.o; it is not on PATH by default.
+          brew install dpkg || true
+          if ! command -v llvm-objcopy >/dev/null 2>&1; then
+            if xcrun -f llvm-objcopy >/dev/null 2>&1; then
+              printf '%s\n' '#!/bin/bash' 'exec "$(xcrun -f llvm-objcopy)" "$@"' > "$HOME/bin/llvm-objcopy"
+              chmod +x "$HOME/bin/llvm-objcopy"
+              echo "$HOME/bin" >> "$GITHUB_PATH"
+            else
+              brew install llvm || true
+              echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+            fi
+          fi
           command -v ldid || echo "::warning::ldid not found, using ad-hoc codesign instead"
           command -v dpkg-deb || echo "::notice::dpkg-deb not found, basebins.tar will be built manually"
+          llvm-objcopy --version 2>/dev/null | head -2 || true
 
       - name: Build basebins (basebins.tar + updater debs)
         run: |
-          set -e
+          set -o pipefail
           cd basebins
 
           # `make package` runs `clean`, which deletes the two committed .deb
@@ -82,12 +112,12 @@ jobs:
             fi
           }
 
-          if ! build_basebins; then
+          if ! build_basebins 2>&1 | tee /tmp/basebins.log; then
             # Newer clang/SDKs emit extra warnings and the Makefiles use -Werror;
             # retry once with warnings downgraded before giving up.
             echo "::warning::basebins build failed, retrying with -Werror downgraded"
-            grep -rl -- '-Werror' --include=Makefile . | xargs sed -i '' 's/-Werror/-Wno-error/g'
-            build_basebins
+            grep -rl -- '-Werror' --include=Makefile . | xargs sed -i '' 's/-Werror/-Wno-error/g' || true
+            build_basebins 2>&1 | tee -a /tmp/basebins.log
           fi
 
           [ -f tnsv2_updater.deb ] || cp /tmp/tnsv2_updater.deb .
@@ -145,5 +175,25 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: xcodebuild-log
-          path: /tmp/xcodebuild.log
+          path: |
+            /tmp/xcodebuild.log
+            /tmp/basebins.log
           if-no-files-found: ignore
+
+      # Job logs need repository admin rights, so publish the build logs on a
+      # throwaway branch to make failures inspectable (raw.githubusercontent.com
+      # is readable without authentication).
+      - name: Publish build logs to the ci-logs branch
+        if: failure()
+        run: |
+          set -x
+          mkdir -p ci-logs
+          cp /tmp/basebins.log ci-logs/basebins.log 2>/dev/null || true
+          cp /tmp/xcodebuild.log ci-logs/xcodebuild.log 2>/dev/null || true
+          ls -la ci-logs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B ci-logs
+          git add -f ci-logs
+          git commit -m "ci logs for run ${GITHUB_RUN_ID} ($GITHUB_JOB)" || true
+          git push -f origin ci-logs
