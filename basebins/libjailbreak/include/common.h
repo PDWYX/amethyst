@@ -8,6 +8,8 @@
 #include <sys/sysctl.h>
 #include <xpc/xpc.h>
 #include <signal.h>
+#include <mach/mach_init.h>  // mach_task_self()
+#include <mach/mach_traps.h> // mach_ports_lookup()
 
 #define FLAG_WAIT_EXEC   (1 << 5)
 #define FLAG_DELAY       (1 << 4)

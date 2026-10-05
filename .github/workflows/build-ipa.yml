@@ -114,9 +114,11 @@ jobs:
 
           if ! build_basebins 2>&1 | tee /tmp/basebins.log; then
             # Newer clang/SDKs emit extra warnings and the Makefiles use -Werror;
-            # retry once with warnings downgraded before giving up.
+            # retry once with warnings downgraded before giving up. Note that
+            # -Wimplicit-function-declaration is a default *error* on modern
+            # clang, so it needs its own flag to be demoted.
             echo "::warning::basebins build failed, retrying with -Werror downgraded"
-            grep -rl -- '-Werror' --include=Makefile . | xargs sed -i '' 's/-Werror/-Wno-error/g' || true
+            grep -rl -- '-Werror' --include=Makefile . | xargs sed -i '' 's/-Werror/-Wno-error -Wno-implicit-function-declaration -Wno-error=implicit-function-declaration/g' || true
             build_basebins 2>&1 | tee -a /tmp/basebins.log
           fi
 
