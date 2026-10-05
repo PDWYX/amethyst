@@ -425,7 +425,11 @@ jb_error_t run_jailbreak(uint32_t flags, char *generator) {
     }
     
     ProgressLog(0.95f, "Finalizing");
-    nvram_set_generator(generator);
+    // Only touch the boot nonce when the user explicitly saved a generator;
+    // NULL means "leave the device's boot nonce alone".
+    if (generator != NULL && generator[0] != '\0') {
+        nvram_set_generator(generator);
+    }
     if (kinfo->tnsv2_supported) {
         install_tnsv2_support();
     }

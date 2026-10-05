@@ -255,22 +255,27 @@ err:
 
 void trustcache_reset(void) {
     if (tc_info == NULL || tc_info->dynamic_entries == 0) return;
-    for (int i = 0; i < tc_info->dynamic_count; i++) {
-        if (tc_info->dynamic_type == DYNAMIC_TC_TYPE_V1) {
-            dynamic_trustcache_full_entry_t *user_entries = calloc(1, tc_info->dynamic_size);
-            if (user_entries == NULL) return;
 
-            kread_buf(tc_info->dynamic_entries, user_entries, tc_info->dynamic_size);
-            for (uint32_t i = 0; i < tc_info->dynamic_count; i++) {
-                memset(user_entries[i].entry.cd_hash, 0x41, 20);
-                user_entries[i].entry.hash_type = 0;
-            }
+    /* The old implementation looped over the whole table once per entry (4000
+     * times), doing a full read + write of the 256KB table on every iteration
+     * (roughly a gigabyte of kernel traffic and 2 million mach traps) while the
+     * trust cache lock was held, which stalls launchd long enough for the
+     * watchdog to panic the device. Writing the cleared table back once is
+     * equivalent, because the loop body was idempotent. */
+    if (tc_info->dynamic_type == DYNAMIC_TC_TYPE_V1) {
+        dynamic_trustcache_full_entry_t *user_entries = calloc(1, tc_info->dynamic_size);
+        if (user_entries == NULL) return;
 
-            kwrite_buf(tc_info->dynamic_entries, user_entries, tc_info->dynamic_size);
-            free(user_entries);
-        } else {
-            kzero(tc_info->dynamic_entries + 20, (tc_info->dynamic_size - sizeof(dynamic_trustcache_hdr_v0_t)) - 20);
+        kread_buf(tc_info->dynamic_entries, user_entries, tc_info->dynamic_size);
+        for (uint32_t i = 0; i < tc_info->dynamic_count; i++) {
+            memset(user_entries[i].entry.cd_hash, 0x41, 20);
+            user_entries[i].entry.hash_type = 0;
         }
+
+        kwrite_buf(tc_info->dynamic_entries, user_entries, tc_info->dynamic_size);
+        free(user_entries);
+    } else {
+        kzero(tc_info->dynamic_entries + 20, (tc_info->dynamic_size - sizeof(dynamic_trustcache_hdr_v0_t)) - 20);
     }
 }
 
@@ -305,16 +310,28 @@ bool trustcache_check(uint8_t *cd_hash) {
 
 uint64_t trustcache_find_slot(void) {
     if (tc_info == NULL || tc_info->dynamic_entries == 0) return 0;
-    for (int i = 0; i < tc_info->dynamic_count; i++) {
+
+    /* Scanning all 4000 entries with a separate kernel read each time is very
+     * expensive and used to happen on every single hash we add. Remember where
+     * the last free slot was found and continue from there (wrapping around). */
+    static uint32_t next_slot = 0;
+    if (next_slot >= tc_info->dynamic_count) next_slot = 0;
+
+    for (uint32_t n = 0; n < tc_info->dynamic_count; n++) {
+        uint32_t i = next_slot + n;
+        if (i >= tc_info->dynamic_count) i -= tc_info->dynamic_count;
+
         if (tc_info->dynamic_type == DYNAMIC_TC_TYPE_V1) {
             dynamic_trustcache_full_entry_t entry = {};
             kread_buf(tc_info->dynamic_entries + (sizeof(dynamic_trustcache_full_entry_t) * i), &entry, sizeof(dynamic_trustcache_full_entry_t));
             
             if (*(uint64_t *)entry.entry.cd_hash == 0x4141414141414141) {
+                next_slot = i;
                 return tc_info->dynamic_entries + (sizeof(dynamic_trustcache_full_entry_t) * i) + offsetof(dynamic_trustcache_full_entry_t, entry.cd_hash);
             }
         } else {
             if (kread32(tc_info->dynamic_entries + (sizeof(dynamic_trustcache_entry_v0_t) * i)) == 0x41414141) {
+                next_slot = i;
                 return tc_info->dynamic_entries + (sizeof(dynamic_trustcache_entry_v0_t) * i);
             }
         }

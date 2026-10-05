@@ -752,9 +752,28 @@ int macho_sign_binary(macho_slice_t *slice, char *ident, uint8_t **out_data, uin
         }
     }
 
-    uint32_t target_page_size = get_page_size();
+    // The kernel's cs_validate_hash() panics ("offset not aligned to cshash
+    // boundary") whenever a page's file offset relative to the blob base (the
+    // Mach-O slice offset inside a FAT file) is not a multiple of the code
+    // directory page size, and it refuses code directories whose page size is
+    // smaller than 4KB (ubc_subr.c: cs_blob_parse_cd, "pageSize < PAGE_SHIFT_4K").
+    // FAT slices are *not* guaranteed to be aligned to the device page size:
+    // plenty of third-party binaries only 4KB-align their slices. Re-signing such
+    // a slice with a device-page-sized code directory therefore panics the kernel
+    // as soon as one of its pages is faulted in, so pick the largest code
+    // directory page size that still divides the slice offset.
+    uint32_t target_page_shift = (get_page_size() == 0x1000) ? 0xc : 0xe;
+    while (target_page_shift > 0xc && (slice->offset & ((1u << target_page_shift) - 1)) != 0) {
+        target_page_shift--;
+    }
+    if ((slice->offset & ((1u << target_page_shift) - 1)) != 0) {
+        // No page size the kernel accepts can describe this slice.
+        status = -1;
+        goto done;
+    }
+
+    uint32_t target_page_size = 1u << target_page_shift;
     uint32_t target_page_mask = target_page_size - 1;
-    uint32_t target_page_shift = (target_page_size == 0x1000) ? 0xc : 0xe;
     uint32_t hash_slots = ((code_limit + target_page_mask) & ~target_page_mask) / target_page_size;
 
     uint32_t cd_size = sizeof(CS_CodeDirectory) + 32 + (hash_slots * 32) + (special_slots * 32);

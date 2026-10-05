@@ -90,16 +90,30 @@ int install_tnsv2_support(void) {
 }
 
 static void show_non_default_apps(void) {
-    CFMutableDictionaryRef plist = load_plist("/var/mobile/Library/Preferences/com.apple.springboard.plist");
-    if (plist != NULL) {
-        CFTypeRef current = CFDictionaryGetValue(plist, CFSTR("SBShowNonDefaultSystemApps"));
-        if (current == NULL || CFGetTypeID(current) != CFBooleanGetTypeID() || !CFBooleanGetValue(current)) {
-            CFDictionaryAddValue(plist, CFSTR("SBShowNonDefaultSystemApps"), kCFBooleanTrue);
-            write_plist("/var/mobile/Library/Preferences/com.apple.springboard.plist", plist);
+    // Write the SpringBoard preference through CFPreferences: cfprefsd's cache
+    // stays in sync with the file, so the old "raw write + SIGKILL cfprefsd"
+    // dance (which could throw away other apps' not yet flushed preferences) is
+    // no longer needed.
+    Boolean show = CFPreferencesGetAppBooleanValue(CFSTR("SBShowNonDefaultSystemApps"), CFSTR("com.apple.springboard"), NULL);
+    if (!show) {
+        CFPreferencesSetAppValue(CFSTR("SBShowNonDefaultSystemApps"), kCFBooleanTrue, CFSTR("com.apple.springboard"));
+        CFPreferencesAppSynchronize(CFSTR("com.apple.springboard"));
+    }
+    
+    if (!CFPreferencesGetAppBooleanValue(CFSTR("SBShowNonDefaultSystemApps"), CFSTR("com.apple.springboard"), NULL)) {
+        // cfprefsd refused the write (for example because of the sandbox), so
+        // fall back to editing the preference file directly and make cfprefsd
+        // re-read it, just like the original implementation did.
+        CFMutableDictionaryRef springboard = load_plist("/var/mobile/Library/Preferences/com.apple.springboard.plist");
+        if (springboard != NULL) {
+            CFDictionarySetValue(springboard, CFSTR("SBShowNonDefaultSystemApps"), kCFBooleanTrue);
+            write_plist("/var/mobile/Library/Preferences/com.apple.springboard.plist", springboard);
             chmod("/var/mobile/Library/Preferences/com.apple.springboard.plist", 0644);
             chown("/var/mobile/Library/Preferences/com.apple.springboard.plist", 501, 501);
+            
+            pid_t cfprefsd_pid = find_pid_for_name("cfprefsd");
+            if (cfprefsd_pid != -1) kill(cfprefsd_pid, SIGKILL);
         }
-        plist = NULL;
     }
     
     char hw_model[128] = {0};
@@ -108,12 +122,28 @@ static void show_non_default_apps(void) {
     
     char plist_path[PATH_MAX] = {0};
     snprintf(plist_path, PATH_MAX-1, "/System/Library/CoreServices/SpringBoard.app/%s.plist", hw_model);
-    plist = load_plist(plist_path);
+    CFMutableDictionaryRef plist = load_plist(plist_path);
     
     if (plist != NULL) {
         CFMutableDictionaryRef capabilities = (CFMutableDictionaryRef)CFDictionaryGetValue(plist, CFSTR("capabilities"));
-        if (capabilities == NULL) {
-            CFDictionaryAddValue(capabilities, CFSTR("hide-non-default-apps"), kCFBooleanFalse);
+        bool changed = false;
+        
+        if (capabilities == NULL || CFGetTypeID(capabilities) != CFDictionaryGetTypeID()) {
+            // This used to call CFDictionaryAddValue() on a NULL dictionary, and
+            // it never disabled the flag when the dictionary already existed.
+            capabilities = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+            CFDictionaryAddValue(plist, CFSTR("capabilities"), capabilities);
+            CFRelease(capabilities);
+            changed = true;
+        }
+        
+        CFTypeRef hide = CFDictionaryGetValue(capabilities, CFSTR("hide-non-default-apps"));
+        if (hide == NULL || CFGetTypeID(hide) != CFBooleanGetTypeID() || CFBooleanGetValue((CFBooleanRef)hide)) {
+            CFDictionarySetValue(capabilities, CFSTR("hide-non-default-apps"), kCFBooleanFalse);
+            changed = true;
+        }
+        
+        if (changed) {
             write_plist(plist_path, plist);
             chmod(plist_path, 0700);
             chown(plist_path, 501, 501);
@@ -121,10 +151,8 @@ static void show_non_default_apps(void) {
         plist = NULL;
     }
     
-    pid_t cfprefsd_pid = find_pid_for_name("cfprefsd");
-    pid_t installd_pid = find_pid_for_name("installd");
-    if (cfprefsd_pid != -1) kill(cfprefsd_pid, SIGKILL);
-    if (installd_pid != -1) kill(installd_pid, SIGKILL);
+    // cfprefsd and installd are deliberately not SIGKILLed here any more: the
+    // jailbreak ends with a userspace reboot that restarts both of them cleanly.
     usleep(100000);
     sync();
 }

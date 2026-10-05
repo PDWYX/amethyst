@@ -263,7 +263,10 @@ bool trustcache_dynamic_check(uint8_t *cd_hash) {
 }
 
 bool trustcache_check(uint8_t *cd_hash) {
-  //  if (trustcache_static_check(cd_hash)) return true;
+    /* Binaries that ship with the OS are covered by the static trust cache;
+     * without this check every stock binary is re-signed / re-added to the
+     * (only 4000 entry) dynamic trust cache on every spawn. */
+    if (trustcache_static_check(cd_hash)) return true;
     return trustcache_dynamic_check(cd_hash);
 }
 

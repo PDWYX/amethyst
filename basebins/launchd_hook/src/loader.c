@@ -89,7 +89,13 @@ int process_binary(const char *path) {
                 }
             }
 
-            if (add_hash) trustcache_lock_add_hash(signature->hash, signature->hash_type);
+            // Only ever add a hash once: trustcache_add_hash() always consumes a
+            // fresh slot and the dynamic trustcache only holds 4000 entries, so
+            // re-adding the same dependency hashes on every spawn would exhaust
+            // the table within minutes (and the refill/reset path is very slow).
+            if (add_hash && !trustcache_check(signature->hash)) {
+                trustcache_lock_add_hash(signature->hash, signature->hash_type);
+            }
             macho_release_signature(signature);
         }
         macho_release(current_macho);

@@ -128,39 +128,206 @@ uint64_t nvram_find_key(nvram_handle_t *handle, uint64_t key) {
     return value;
 }
 
+// The boot nonce lives in the kernel's Open Firmware variable table
+// (xnu: iokit/Kernel/IONVRAM.cpp, "OFVariable gOFVariables[]") where it is
+// declared as
+//     {"com.apple.System.boot-nonce", kOFVariableTypeString, kOFVariablePermKernelOnly, -1},
+// and IODTNVRAM::setPropertyInternal() refuses a userspace write unless the
+// entry allows kOFVariablePermUserWrite. Relaxing that single entry lets the
+// regular IOKit property path perform the write, so we never have to guess where
+// the value bytes live inside the OSString object (the previous implementation
+// wrote to "kread64(generator_entry + 0x10)" and could therefore corrupt kernel
+// memory, which is what makes the device panic a few seconds after booting).
+
+#define NV_OF_VAR_PERM_USER_WRITE 2
+// const char *variableName; UInt32 variableType; UInt32 variablePerm; SInt32 variableOffset;
+#define NV_OF_VAR_ENTRY_SIZE 24
+
+static bool nvram_kernel_section(const char *segment_name, const char *section_name, uint64_t *addr, uint64_t *size) {
+    if (kinfo == NULL || kinfo->kernel_base == 0) return false;
+
+    struct mach_header_64 *hdr = calloc(1, 0x4000);
+    if (hdr == NULL) return false;
+
+    kread_buf(kinfo->kernel_base, hdr, 0x4000);
+
+    bool found = false;
+    if (hdr->magic == MH_MAGIC_64) {
+        struct load_command *load_cmd = (struct load_command *)(hdr + 1);
+        for (uint32_t i = 0; i < hdr->ncmds; i++) {
+            if (load_cmd->cmdsize < sizeof(struct load_command)) break;
+            if (load_cmd->cmd == LC_SEGMENT_64) {
+                struct segment_command_64 *segment = (struct segment_command_64 *)load_cmd;
+                if (strcmp(segment->segname, segment_name) == 0) {
+                    struct section_64 *section = (struct section_64 *)(segment + 1);
+                    for (uint32_t j = 0; j < segment->nsects; j++) {
+                        if (strcmp(section[j].sectname, section_name) == 0) {
+                            *addr = section[j].addr;
+                            *size = section[j].size;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (found) break;
+            load_cmd = (struct load_command *)((uint8_t *)load_cmd + load_cmd->cmdsize);
+        }
+    }
+
+    free(hdr);
+    return found;
+}
+
+static uint64_t nvram_find_kernel_string(uint64_t addr, uint64_t size, const char *needle) {
+    size_t needle_length = strlen(needle);
+    if (addr == 0 || needle_length == 0 || size < needle_length) return 0;
+
+    size_t chunk_size = 0x10000;
+    uint8_t *buf = malloc(chunk_size + needle_length);
+    if (buf == NULL) return 0;
+
+    uint64_t found = 0;
+    for (uint64_t offset = 0; offset + needle_length <= size; offset += chunk_size) {
+        size_t read_size = chunk_size;
+        if (size - offset < read_size) read_size = (size_t)(size - offset);
+        if (read_size < needle_length) break;
+
+        memset(buf, 0, chunk_size + needle_length);
+        kread_buf(addr + offset, buf, (uint32_t)read_size);
+
+        for (size_t i = 0; i + needle_length <= read_size; i++) {
+            if (memcmp(buf + i, needle, needle_length) == 0) {
+                found = addr + offset + i;
+                break;
+            }
+        }
+        if (found != 0) break;
+    }
+
+    free(buf);
+    return found;
+}
+
+static uint64_t nvram_find_pointer(uint64_t addr, uint64_t size, uint64_t value) {
+    if (addr == 0 || size < sizeof(uint64_t)) return 0;
+
+    size_t chunk_size = 0x10000;
+    uint8_t *buf = malloc(chunk_size + sizeof(uint64_t));
+    if (buf == NULL) return 0;
+
+    uint64_t found = 0;
+    for (uint64_t offset = 0; offset + sizeof(uint64_t) <= size; offset += chunk_size) {
+        size_t read_size = chunk_size;
+        if (size - offset < read_size) read_size = (size_t)(size - offset);
+
+        memset(buf, 0, chunk_size + sizeof(uint64_t));
+        kread_buf(addr + offset, buf, (uint32_t)read_size);
+
+        for (size_t i = 0; i + sizeof(uint64_t) <= read_size; i += sizeof(uint64_t)) {
+            uint64_t candidate = 0;
+            memcpy(&candidate, buf + i, sizeof(candidate));
+            if (candidate == value) {
+                found = addr + offset + i;
+                break;
+            }
+        }
+        if (found != 0) break;
+    }
+
+    free(buf);
+    return found;
+}
+
+static int nvram_relax_boot_nonce_perm(void) {
+    uint64_t cstring_addr = 0;
+    uint64_t cstring_size = 0;
+    if (!nvram_kernel_section("__TEXT", "__cstring", &cstring_addr, &cstring_size)) return -1;
+
+    // gOFVariables starts with {"little-endian?", ...}: find that string and the
+    // only pointer to it inside the kernel's data segments to locate the table
+    // without depending on any symbol offset.
+    uint64_t string_addr = nvram_find_kernel_string(cstring_addr, cstring_size, "little-endian?");
+    if (string_addr == 0) return -1;
+
+    uint64_t table = 0;
+    const char *segments[] = { "__DATA", "__DATA_CONST", NULL };
+    const char *sections[] = { "__data", "__const", NULL };
+    for (int s = 0; segments[s] != NULL && table == 0; s++) {
+        for (int t = 0; sections[t] != NULL && table == 0; t++) {
+            uint64_t addr = 0;
+            uint64_t size = 0;
+            if (!nvram_kernel_section(segments[s], sections[t], &addr, &size)) continue;
+            table = nvram_find_pointer(addr, size, string_addr);
+        }
+    }
+    if (table == 0) return -1;
+
+    for (uint32_t i = 0; i < 128; i++) {
+        uint64_t entry = table + ((uint64_t)i * NV_OF_VAR_ENTRY_SIZE);
+        uint64_t name = kread64(entry + 0);
+        uint32_t type = kread32(entry + 8);
+        uint32_t perm = kread32(entry + 12);
+
+        // Only continue while every entry still looks like OFVariable: names
+        // inside __cstring, known type/perm values and a NUL terminated table.
+        if (name == 0) return -1;
+        if (name < cstring_addr || name >= (cstring_addr + cstring_size)) return -1;
+        if (type < 1 || type > 4) return -1;
+        if (perm > 3) return -1;
+
+        char variable_name[64] = {0};
+        kread_buf(name, variable_name, sizeof(variable_name) - 1);
+        if (i == 0 && strcmp(variable_name, "little-endian?") != 0) return -1;
+
+        if (strcmp(variable_name, "com.apple.System.boot-nonce") == 0) {
+            if (perm != NV_OF_VAR_PERM_USER_WRITE) {
+                kwrite32(entry + 12, NV_OF_VAR_PERM_USER_WRITE);
+            }
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
 int nvram_set_generator(char *generator) {
     char new_generator[20] = {0};
     if (nvram_normalize_generator(generator, &new_generator[0]) != 0) return -1;
-    int status = -1;
+
+    // Fail closed: if we cannot prove that the permission of the boot nonce
+    // entry was relaxed, do not touch the nonce at all.
+    if (nvram_relax_boot_nonce_perm() != 0) return -1;
 
     nvram_handle_t *handle = nvram_open();
-    if (handle == NULL) goto done;
-    
-    uint64_t target_key = kread64(handle->ap_object_addr + 0xc0);
-    if (target_key == 0) goto done;
+    if (handle == NULL) return -1;
 
-    uint64_t generator_entry = nvram_find_key(handle, target_key);
-    if (generator_entry == 0) {
-        if (nvram_create_generator(handle) == 0) {
-            usleep(10000);
-            generator_entry = nvram_find_key(handle, target_key);
+    int status = -1;
+    CFStringRef value = CFStringCreateWithCString(NULL, new_generator, kCFStringEncodingUTF8);
+    CFMutableDictionaryRef dict = CFDictionaryCreateMutable(NULL, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+
+    if (value != NULL && dict != NULL) {
+        CFDictionarySetValue(dict, CFSTR("com.apple.System.boot-nonce"), value);
+
+        if (IORegistryEntrySetCFProperties(handle->dt_service, dict) == KERN_SUCCESS) {
+            // Report success only when the value really is the requested one.
+            CFTypeRef readback = IORegistryEntryCreateCFProperty(handle->dt_service, CFSTR("com.apple.System.boot-nonce"), NULL, 0);
+            if (readback != NULL) {
+                if (CFGetTypeID(readback) == CFStringGetTypeID()) {
+                    char current_generator[20] = {0};
+                    if (CFStringGetCString(readback, current_generator, sizeof(current_generator), kCFStringEncodingUTF8) &&
+                        strcasecmp(current_generator, new_generator) == 0) {
+                        status = 0;
+                    }
+                }
+                CFRelease(readback);
+            }
+            if (status == 0) nvram_sync(handle);
         }
-        if (generator_entry == 0) goto done;
     }
-    
-    uint64_t generator_addr = kread64(generator_entry + 0x10);
-    if (generator_addr == 0) goto done;
-    
-    char current_generator[20] = {0};
-    kread_buf(generator_addr, current_generator, 18);
-    
-    if (strcasecmp(current_generator, new_generator) != 0) {
-        kwrite_buf(generator_addr, new_generator, 18);
-        nvram_sync(handle);
-    }
-    status = 0;
 
-done:
+    if (dict != NULL) CFRelease(dict);
+    if (value != NULL) CFRelease(value);
     nvram_close(handle);
     return status;
 }

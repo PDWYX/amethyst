@@ -435,7 +435,11 @@ extern int csops(pid_t pid, unsigned int  ops, void *useraddr, size_t usersize);
     }
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        jb_error_t err = run_jailbreak(flags, (char *)[amethyst.generator UTF8String]);
+        // Only hand the generator to the jailbreak when the user saved one:
+        // writing the default value would change the device's boot nonce without
+        // ever asking, which breaks futurerestore/APTicket workflows.
+        char *generator = amethyst.generatorUserSet ? (char *)[amethyst.generator UTF8String] : NULL;
+        jb_error_t err = run_jailbreak(flags, generator);
         dispatch_async(dispatch_get_main_queue(), ^{
             self.jailbreakCardButton.optionButton.enabled = true;
             self.creditsCardButton.optionButton.enabled = true;
@@ -523,15 +527,18 @@ extern int csops(pid_t pid, unsigned int  ops, void *useraddr, size_t usersize);
     UIColor *set_color = [UIColor whiteColor];
     bool set_enabled = true;
 
-    if (text[0] == '0' || text[1] == 'x') {
+    // A generator is only valid when it is exactly 18 characters long and looks
+    // like "0x" + 16 hex digits (this used to use || instead of && and indexed
+    // text[1..17] without checking the length, reading past the end of short input).
+    if (text == NULL || strlen(text) != 18 || text[0] != '0' || text[1] != 'x') {
+        set_enabled = false;
+    } else {
         for (int i = 2; i < 18; i++) {
-            if (!isxdigit(text[i])) {
+            if (!isxdigit((unsigned char)text[i])) {
                 set_enabled = false;
                 break;
             }
         }
-    } else {
-        set_enabled = false;
     }
 
     if (!set_enabled) set_color = [set_color colorWithAlphaComponent:0.4f];
@@ -574,6 +581,9 @@ extern int csops(pid_t pid, unsigned int  ops, void *useraddr, size_t usersize);
 
 - (void)saveGenerator {
     amethyst.generator = self.generatorTextField.text;
+    // The generator is only applied to the boot nonce during a jailbreak after
+    // the user saved it on purpose.
+    amethyst.generatorUserSet = true;
     [self.setGeneratorOption.optionButton setTitle:amethyst.generator forState:UIControlStateNormal];
     [amethyst saveConfig];
     [self closeAllCards:NULL];

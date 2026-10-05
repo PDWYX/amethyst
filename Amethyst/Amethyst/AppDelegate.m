@@ -27,18 +27,21 @@
         
         self.themeName = @"Amethyst";
         self.generator = @"0x1111111111111111";
+        self.generatorUserSet = false;
         self.exploit = self.trigonSupported ? Exploit_Trigon : Exploit_Hemlock;
         self.enableTweaks = true;
         self.lightMode = true;
 
         [self.defaults setObject:self.themeName forKey:@"themeName"];
         [self.defaults setObject:self.generator forKey:@"generator"];
+        [self.defaults setBool:self.generatorUserSet forKey:@"generatorUserSet"];
         [self.defaults setInteger:self.exploit forKey:@"exploit"];
         [self.defaults setBool:self.enableTweaks forKey:@"enableTweaks"];
         [self.defaults setBool:YES forKey:@"init"];
     } else {
         if ((self.themeName = [self.defaults stringForKey:@"themeName"]) == NULL) self.themeName = @"Amethyst";
         if ((self.generator = [self.defaults stringForKey:@"generator"]) == NULL) self.generator = @"0x1111111111111111";
+        self.generatorUserSet = [self.defaults boolForKey:@"generatorUserSet"];
         self.enableTweaks = [self.defaults boolForKey:@"enableTweaks"];
         self.lightMode = [self.defaults boolForKey:@"lightMode"];
         
@@ -76,6 +79,7 @@
 - (void)saveConfig {
     [self.defaults setObject:self.themeName forKey:@"themeName"];
     [self.defaults setObject:self.generator forKey:@"generator"];
+    [self.defaults setBool:self.generatorUserSet forKey:@"generatorUserSet"];
     [self.defaults setInteger:self.exploit forKey:@"exploit"];
     [self.defaults setBool:self.enableTweaks forKey:@"enableTweaks"];
     [self.defaults setBool:self.lightMode forKey:@"lightMode"];

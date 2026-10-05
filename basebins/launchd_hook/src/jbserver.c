@@ -187,7 +187,7 @@ static jbserver_err_t jbserver_init_process(xpc_object_t request, xpc_object_t r
 
     if (!reinit_only) {
         xpc_object_t xpc_target_uid = xpc_dictionary_get_value_orig(request, "target_uid");
-        if (xpc_target_uid != NULL && xpc_get_type(xpc_target_uid) && XPC_TYPE_INT64) {
+        if (xpc_target_uid != NULL && xpc_get_type(xpc_target_uid) == XPC_TYPE_INT64) {
             uid_t target_uid = (uid_t)xpc_int64_get_value(xpc_target_uid);
 
             if (jbserver_getuid(request) != target_uid) {
@@ -201,7 +201,7 @@ static jbserver_err_t jbserver_init_process(xpc_object_t request, xpc_object_t r
         }
 
         xpc_object_t xpc_target_gid = xpc_dictionary_get_value_orig(request, "target_gid");
-        if (xpc_target_gid != NULL && xpc_get_type(xpc_target_uid) && XPC_TYPE_INT64) {
+        if (xpc_target_gid != NULL && xpc_get_type(xpc_target_gid) == XPC_TYPE_INT64) {
             uid_t target_gid = (uid_t)xpc_int64_get_value(xpc_target_gid);
 
             if (jbserver_getgid(request) != target_gid) {

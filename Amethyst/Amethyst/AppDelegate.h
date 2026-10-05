@@ -11,6 +11,9 @@ typedef enum : NSUInteger {
 @property (nonatomic, assign) CFMutableDictionaryRef trigonCache;
 @property (nonatomic, strong) NSString *themeName;
 @property (nonatomic, strong) NSString *generator;
+// YES only once the user saved a generator explicitly, so the default value is
+// not written to the boot nonce on every jailbreak.
+@property (nonatomic, assign) bool generatorUserSet;
 @property (nonatomic, assign) AmethystExploitOption exploit;
 @property (nonatomic, assign) bool lightMode;
 @property (nonatomic, assign) bool enableTweaks;

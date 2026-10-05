@@ -13,6 +13,13 @@
 #define SONAR_LOADER "/usr/lib/Sonar/libsonar.dylib"
 #define GENERIC_LOADER "/usr/lib/TweakInject.dylib"
 
+/*
+ * Daemons that must never be injected: they own the state an app appears to
+ * "lose" when tampered with (securityd/keybagd -> keychain, cfprefsd ->
+ * preferences, installd/containermanagerd/assertiond/pkd -> containers) or they
+ * enforce code signing (amfid) / crash with heap corruption (bluetoothd).
+ * Keep this list in sync with basebins/launchd_hook/include/loader.h.
+ */
 static const char *path_block_list[] = {
     "/usr/libexec/keybagd",
     "/usr/libexec/FinishRestoreFromBackup",
@@ -21,6 +28,16 @@ static const char *path_block_list[] = {
     "/usr/libexec/init_featureflags",
     "/usr/libexec/FinishRestoreFromBackup",
     "/usr/libexec/adprivacyd",
+    "/usr/libexec/amfid",
+    "/usr/libexec/assertiond",
+    "/usr/libexec/containermanagerd",
+    "/usr/libexec/installd",
+    "/usr/libexec/pkd",
+    "/usr/libexec/securityd",
+    "/usr/libexec/cfprefsd",
+    "/usr/sbin/cfprefsd",
+    "/usr/sbin/securityd",
+    "/usr/sbin/bluetoothd",
     NULL
 };
 
