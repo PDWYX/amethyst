@@ -132,6 +132,7 @@ extern mach_port_t IORegistryEntryFromPath(mach_port_t, const char[512]);
 extern kern_return_t IORegistryEntryGetProperty(mach_port_t, const char[512], const char[4096], uint32_t *);
 extern int IORegistryEntrySetCFProperties(mach_port_t entry, CFTypeRef properties);
 extern int IORegistryEntryCreateCFProperties(mach_port_t, CFMutableDictionaryRef *, void *, int);
+extern CFTypeRef IORegistryEntryCreateCFProperty(mach_port_t, CFStringRef, void *, int);
 extern int IOServiceOpen(mach_port_t, mach_port_t, uint32_t, mach_port_t *);
 extern int IOConnectCallStructMethod(mach_port_t, uint32_t, void *, size_t, void *, size_t *);
 extern CFMutableDictionaryRef IOServiceMatching(const char *name);
